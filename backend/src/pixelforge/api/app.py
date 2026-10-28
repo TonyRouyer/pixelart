@@ -22,7 +22,7 @@ from pixelforge.api.routes import (
     ws,
 )
 from pixelforge.comfy.client import ComfyClient, HttpComfyClient
-from pixelforge.comfy.health import check_comfy
+from pixelforge.comfy.health import cached_health, check_comfy
 from pixelforge.comfy.sprite_fake import SpriteFakeComfyClient
 from pixelforge.config import Settings, get_settings
 from pixelforge.generation.pose_generator import PoseGenerator
@@ -52,8 +52,8 @@ def create_app(settings: Settings | None = None, comfy: ComfyClient | None = Non
         else:
             client = HttpComfyClient(settings.comfy_url)
 
-        async def health():
-            return await check_comfy(client, settings)
+        # The banner polls every 10 s and every job checks too: reuse a report for 5 s.
+        health = cached_health(lambda: check_comfy(client, settings), ttl=5.0)
 
         service = ProjectService(
             ProjectRepository(storage),

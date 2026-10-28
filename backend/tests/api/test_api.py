@@ -298,3 +298,22 @@ def test_fake_comfy_setting_selects_sprite_fake(tmp_path, caplog):
         assert isinstance(c.app.state.client, SpriteFakeComfyClient)
         assert c.get("/api/health").json()["comfy"]["ok"] is True
     assert "fake" in caplog.text.lower()
+
+
+def test_health_is_cached_between_polls(settings):
+    from fastapi.testclient import TestClient
+
+    from pixelforge.api.app import create_app
+    from pixelforge.comfy.sprite_fake import SpriteFakeComfyClient
+
+    class Counting(SpriteFakeComfyClient):
+        calls = 0
+
+        async def object_info(self) -> dict:
+            Counting.calls += 1
+            return await super().object_info()
+
+    with TestClient(create_app(settings, Counting())) as c:
+        for _ in range(3):
+            assert c.get("/api/health").json()["comfy"]["ok"] is True
+    assert Counting.calls == 1
