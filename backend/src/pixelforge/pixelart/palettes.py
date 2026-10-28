@@ -66,30 +66,70 @@ def parse_palette(text: str) -> list[RGB]:
     return colors
 
 
+def _augmented(points: np.ndarray) -> np.ndarray:
+    """(N, 4) float32 rows [r, g, b, 1] for `_nearest`."""
+    pts = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    return np.hstack([pts, np.ones((len(pts), 1), dtype=np.float32)])
+
+
+def _nearest(augmented: np.ndarray, centers: np.ndarray) -> np.ndarray:
+    """Index of the nearest centre for each row of `_augmented` points.
+
+    |x - c|^2 = |x|^2 - 2 x.c + |c|^2; |x|^2 does not change the argmin, so one (N, 4) x (4, k)
+    float32 product gives the ranking without any (N, k, 3) intermediate.
+    """
+    c = np.asarray(centers, dtype=np.float32)
+    weights = np.hstack([-2.0 * c, (c * c).sum(axis=1, keepdims=True)])
+    return (augmented @ weights.T).argmin(axis=1)
+
+
+def _unique_colors(data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Distinct (N, 3) uint8 colours, sorted like ``np.unique(axis=0)``, and their counts."""
+    packed = (data[:, 0].astype(np.uint32) << 16) | (data[:, 1].astype(np.uint32) << 8) | data[:, 2]
+    keys, counts = np.unique(packed, return_counts=True)
+    distinct = np.stack([keys >> 16, keys >> 8, keys], axis=1) & 255
+    return distinct.astype(np.uint8), counts
+
+
 def kmeans_palette(pixels: np.ndarray, k: int, seed: int = 0, max_iter: int = 20) -> list[RGB]:
-    """Deterministic k-means (k-means++ init) over (N, 3) RGB pixels."""
+    """Deterministic k-means (k-means++ init) over (N, 3) RGB pixels.
+
+    The seeding samples the pixels themselves (duplicates included); the Lloyd iterations then
+    run on the distinct colours weighted by their pixel counts, which gives the same centroids.
+    """
     data = np.asarray(pixels, dtype=np.uint8).reshape(-1, 3)
-    distinct = np.unique(data, axis=0)
+    distinct, counts = _unique_colors(data)
     if len(distinct) <= k:
         return [(int(r), int(g), int(b)) for r, g, b in distinct]
     pts = data.astype(np.float64)
+    channels = [np.ascontiguousarray(pts[:, ch]) for ch in range(3)]
+
+    def sq_dist(center: np.ndarray) -> np.ndarray:
+        r, g, b = ((col - v) ** 2 for col, v in zip(channels, center, strict=True))
+        return r + g + b
+
     rng = np.random.default_rng(seed)
     centers = np.empty((k, 3))
     centers[0] = pts[rng.integers(len(pts))]
-    closest = ((pts - centers[0]) ** 2).sum(axis=1)
+    closest = sq_dist(centers[0])
     for i in range(1, k):
         total = closest.sum()
         idx = rng.choice(len(pts), p=closest / total) if total > 0 else rng.integers(len(pts))
         centers[i] = pts[idx]
-        closest = np.minimum(closest, ((pts - centers[i]) ** 2).sum(axis=1))
+        np.minimum(closest, sq_dist(centers[i]), out=closest)
+    colors = distinct.astype(np.float64)
+    weights = counts.astype(np.float64)
+    augmented = _augmented(distinct)
     for _ in range(max_iter):
-        dist = ((pts[:, None, :] - centers[None, :, :]) ** 2).sum(axis=2)
-        labels = dist.argmin(axis=1)
+        labels = _nearest(augmented, centers)
+        mass = np.bincount(labels, weights=weights, minlength=k)
+        sums = np.stack(
+            [np.bincount(labels, weights=weights * colors[:, ch], minlength=k) for ch in range(3)],
+            axis=1,
+        )
         new = centers.copy()
-        for i in range(k):
-            members = pts[labels == i]
-            if len(members):
-                new[i] = members.mean(axis=0)
+        filled = mass > 0
+        new[filled] = sums[filled] / mass[filled, None]
         if np.allclose(new, centers):
             centers = new
             break
@@ -107,10 +147,9 @@ def quantize(img: Image.Image, palette: list[RGB]) -> Image.Image:
     arr = np.array(img.convert("RGBA"), dtype=np.uint8)
     if not palette:
         return Image.fromarray(arr)
-    pal = np.array(palette, dtype=np.int32)
-    rgb = arr[..., :3].reshape(-1, 1, 3).astype(np.int32)
-    nearest = ((rgb - pal[None, :, :]) ** 2).sum(axis=2).argmin(axis=1)
-    arr[..., :3] = pal[nearest].reshape(arr.shape[0], arr.shape[1], 3).astype(np.uint8)
+    pal = np.array(palette, dtype=np.uint8)
+    nearest = _nearest(_augmented(arr[..., :3]), pal)
+    arr[..., :3] = pal[nearest].reshape(arr.shape[0], arr.shape[1], 3)
     return Image.fromarray(arr)
 
 

@@ -94,3 +94,69 @@ def test_character_palette_all_transparent():
 
 def test_outline_setting_unused_here():
     assert OutlineSettings().enabled is False
+
+
+def _reference_kmeans(pixels, k, seed=0, max_iter=20):
+    """The original (N, k, 3) float64 implementation, kept as an oracle."""
+    data = np.asarray(pixels, dtype=np.uint8).reshape(-1, 3)
+    distinct = np.unique(data, axis=0)
+    if len(distinct) <= k:
+        return [(int(r), int(g), int(b)) for r, g, b in distinct]
+    pts = data.astype(np.float64)
+    rng = np.random.default_rng(seed)
+    centers = np.empty((k, 3))
+    centers[0] = pts[rng.integers(len(pts))]
+    closest = ((pts - centers[0]) ** 2).sum(axis=1)
+    for i in range(1, k):
+        total = closest.sum()
+        idx = rng.choice(len(pts), p=closest / total) if total > 0 else rng.integers(len(pts))
+        centers[i] = pts[idx]
+        closest = np.minimum(closest, ((pts - centers[i]) ** 2).sum(axis=1))
+    for _ in range(max_iter):
+        dist = ((pts[:, None, :] - centers[None, :, :]) ** 2).sum(axis=2)
+        labels = dist.argmin(axis=1)
+        new = centers.copy()
+        for i in range(k):
+            members = pts[labels == i]
+            if len(members):
+                new[i] = members.mean(axis=0)
+        if np.allclose(new, centers):
+            centers = new
+            break
+        centers = new
+    result = []
+    for c in np.rint(centers).astype(int):
+        color = (int(c[0]), int(c[1]), int(c[2]))
+        if color not in result:
+            result.append(color)
+    return result
+
+
+def test_kmeans_matches_reference_on_fixed_input():
+    rng = np.random.default_rng(11)
+    base = rng.integers(0, 256, size=(40, 3), dtype=np.uint8)
+    px = base[rng.integers(0, len(base), size=3000)]  # many duplicated pixels
+    for k in (3, 8, 16):
+        assert kmeans_palette(px, k, seed=2) == _reference_kmeans(px, k, seed=2)
+
+
+def test_kmeans_large_input_is_fast():
+    import time
+
+    rng = np.random.default_rng(0)
+    px = rng.integers(0, 256, size=(200_000, 3), dtype=np.uint8)
+    start = time.perf_counter()
+    pal = kmeans_palette(px, 64, seed=0)
+    assert time.perf_counter() - start < 2.0
+    assert 1 <= len(pal) <= 64
+
+
+def test_quantize_matches_bruteforce():
+    rng = np.random.default_rng(3)
+    arr = rng.integers(0, 256, size=(30, 30, 4), dtype=np.uint8)
+    palette = [tuple(int(v) for v in c) for c in rng.integers(0, 256, size=(24, 3))]
+    out = np.array(quantize(Image.fromarray(arr, "RGBA"), palette))
+    pal = np.array(palette, dtype=np.int64)
+    rgb = arr[..., :3].reshape(-1, 1, 3).astype(np.int64)
+    expected = pal[((rgb - pal[None]) ** 2).sum(axis=2).argmin(axis=1)].reshape(30, 30, 3)
+    assert (out[..., :3] == expected).all() and (out[..., 3] == arr[..., 3]).all()
