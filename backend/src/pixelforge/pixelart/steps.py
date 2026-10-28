@@ -16,21 +16,51 @@ def _rgba_array(img: Image.Image) -> np.ndarray:
     return np.array(img.convert("RGBA"), dtype=np.uint8)
 
 
-def remove_background_colorkey(img: Image.Image, tolerance: int = 24) -> Image.Image:
-    """Make the flat background transparent.
+def _fill_runs(seeds: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Extend ``seeds`` to every horizontal run of ``mask`` pixels that contains one of them."""
+    starts = mask.copy()
+    starts[:, 1:] &= ~mask[:, :-1]
+    run_ids = np.cumsum(starts.ravel()).reshape(mask.shape) * mask
+    seeded = np.zeros(int(run_ids.max()) + 1, dtype=bool)
+    seeded[run_ids[seeds & mask]] = True
+    seeded[0] = False
+    return seeded[run_ids]
 
-    The background colour is the per-channel median of the four corners; pixels whose RGB
-    distance to it is <= tolerance get alpha 0. An image that already has transparency is
-    returned unchanged (as a copy).
+
+def _flood_from_border(mask: np.ndarray) -> np.ndarray:
+    """``mask`` pixels 4-connected to the image border through ``mask`` pixels.
+
+    Alternating row and column run fills grow the region until it stops changing; each pass is
+    vectorised, and a few passes are enough unless the background winds like a maze.
+    """
+    region = np.zeros_like(mask)
+    region[0, :], region[-1, :] = mask[0, :], mask[-1, :]
+    region[:, 0], region[:, -1] = mask[:, 0], mask[:, -1]
+    while True:
+        grown = _fill_runs(region, mask)
+        grown = _fill_runs(grown.T, mask.T).T
+        if np.array_equal(grown, region):
+            return region
+        region = grown
+
+
+def remove_background_colorkey(img: Image.Image, tolerance: int = 32) -> Image.Image:
+    """Make the background transparent by flood-filling from the frame borders.
+
+    The background colour is the per-channel median of the border pixels. Pixels whose RGB
+    Euclidean distance to it is <= tolerance and that are 4-connected to the border through such
+    pixels get alpha 0; similar pixels enclosed by the character stay opaque. An image that
+    already has transparency is returned unchanged (as a copy).
     """
     arr = _rgba_array(img)
     if arr.size == 0 or arr[..., 3].min() < 255:
         return Image.fromarray(arr, "RGBA")
-    corners = np.stack([arr[0, 0], arr[0, -1], arr[-1, 0], arr[-1, -1]])[:, :3]
-    background = np.median(corners, axis=0)
-    diff = arr[..., :3].astype(np.float64) - background
-    distance = np.sqrt((diff**2).sum(axis=-1))
-    arr[distance <= tolerance, 3] = 0
+    rgb = arr[..., :3]
+    border = np.concatenate([rgb[0], rgb[-1], rgb[1:-1, 0], rgb[1:-1, -1]])
+    background = np.median(border, axis=0)
+    diff = rgb.astype(np.float32) - background.astype(np.float32)
+    similar = (diff**2).sum(axis=-1) <= tolerance**2
+    arr[_flood_from_border(similar), 3] = 0
     return Image.fromarray(arr, "RGBA")
 
 

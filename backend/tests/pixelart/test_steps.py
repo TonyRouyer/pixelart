@@ -46,7 +46,7 @@ def test_colorkey_keeps_existing_alpha():
 
 def test_colorkey_tolerance_and_input_untouched():
     img = solid((20, 20), (240, 240, 240))
-    img.putpixel((10, 10), (230, 240, 250))  # within tolerance 24
+    img.putpixel((10, 10), (230, 240, 250))  # within the default tolerance
     img.putpixel((11, 11), (100, 100, 100))
     before = img.tobytes()
     out = remove_background_colorkey(img)
@@ -57,6 +57,59 @@ def test_colorkey_tolerance_and_input_untouched():
 def test_colorkey_accepts_other_modes():
     out = remove_background_colorkey(Image.new("RGB", (10, 10), (250, 250, 250)))
     assert out.mode == "RGBA" and out.getchannel("A").getextrema() == (0, 0)
+
+
+def gradient_frame(size=340, top=200, bottom=225):
+    """Vertical gray gradient ``top`` -> ``bottom``, fully opaque."""
+    column = np.linspace(top, bottom, size).round().astype(np.uint8)
+    arr = np.empty((size, size, 4), dtype=np.uint8)
+    arr[..., :3] = column[:, None, None]
+    arr[..., 3] = 255
+    return Image.fromarray(arr, "RGBA")
+
+
+def character_with_enclosed_patch(size=340):
+    """Gradient background, a dark character whose middle holds a background-gray patch."""
+    img = gradient_frame(size)
+    draw_rect(img, (100, 80, 240, 300), (40, 30, 90))
+    draw_rect(img, (140, 140, 200, 200), (212, 212, 212))  # same gray as the background
+    return img
+
+
+def test_colorkey_removes_gradient_background():
+    img = gradient_frame()
+    draw_rect(img, (150, 150, 190, 190), (200, 0, 0))
+    alpha = np.array(remove_background_colorkey(img))[..., 3]
+    character = np.zeros_like(alpha, dtype=bool)
+    character[150:190, 150:190] = True
+    assert (alpha[~character] == 0).all() and (alpha[character] == 255).all()
+
+
+def test_colorkey_keeps_enclosed_background_colour():
+    alpha = np.array(remove_background_colorkey(character_with_enclosed_patch()))[..., 3]
+    assert (alpha[80:300, 100:240] == 255).all()  # the gray patch inside stays opaque
+    assert alpha[:80].max() == 0 and alpha[300:].max() == 0
+    assert alpha[:, :100].max() == 0 and alpha[:, 240:].max() == 0
+
+
+def test_colorkey_tolerance_is_euclidean_rgb():
+    img = solid((20, 20), (240, 240, 240))
+    img.putpixel((0, 10), (210, 240, 240))  # distance 30: background
+    img.putpixel((10, 0), (220, 220, 220))  # distance 34.6 (20 per channel): kept
+    alpha = remove_background_colorkey(img).getchannel("A")
+    assert alpha.getpixel((0, 10)) == 0 and alpha.getpixel((10, 0)) == 255
+
+
+def test_colorkey_is_fast_on_large_frames():
+    import time
+
+    img = character_with_enclosed_patch()
+    best = float("inf")
+    for _ in range(5):
+        start = time.perf_counter()
+        remove_background_colorkey(img)
+        best = min(best, time.perf_counter() - start)
+    assert best < 0.05
 
 
 def test_common_bbox_union():

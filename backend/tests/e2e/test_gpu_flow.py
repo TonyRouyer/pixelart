@@ -9,6 +9,7 @@ import io
 import time
 import zipfile
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -34,6 +35,20 @@ def _wait_job(client: TestClient, job_id: str) -> dict:
 
 def _assert_job_ok(job: dict) -> None:
     assert job["status"] == "succeeded", f"job failed: {job}"
+
+
+def _assert_background_removed(data_dir, pid: str) -> None:
+    """No background leftovers on the left, right and bottom 1-px border of processed frames.
+
+    The top row is exempt: fit_to_cell may legitimately put the head of a tall character there.
+    """
+    frames = sorted((data_dir / "projects" / pid / "animations" / "walk").glob("*/processed/*.png"))
+    assert len(frames) == 24, frames
+    for path in frames:
+        with Image.open(path) as img:
+            alpha = np.array(img.convert("RGBA"))[..., 3]
+        border = np.concatenate([alpha[:, 0], alpha[:, -1], alpha[-1, :]])
+        assert border.max() == 0, f"opaque border pixels in {path.relative_to(data_dir)}"
 
 
 def test_prompt_to_walk_sheet_export(tmp_path):
@@ -83,6 +98,7 @@ def test_prompt_to_walk_sheet_export(tmp_path):
         assert len(jobs) == 4
         for job in jobs:
             _assert_job_ok(_wait_job(client, job["id"]))
+        _assert_background_removed(tmp_path, pid)
 
         r = client.post(f"/api/projects/{pid}/export")
         assert r.status_code == 200, r.text
