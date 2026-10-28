@@ -1,0 +1,275 @@
+{
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "IN:checkpoint:ckpt_name"
+    },
+    "_meta": {
+      "title": "IN:checkpoint:ckpt_name"
+    }
+  },
+  "2": {
+    "class_type": "PrimitiveFloat",
+    "inputs": {
+      "value": "IN:lora_strength:value"
+    },
+    "_meta": {
+      "title": "IN:lora_strength:value"
+    }
+  },
+  "3": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "lora_name": "IN:lora:lora_name",
+      "model": [
+        "1",
+        0
+      ],
+      "clip": [
+        "1",
+        1
+      ],
+      "strength_model": [
+        "2",
+        0
+      ],
+      "strength_clip": [
+        "2",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "IN:lora:lora_name"
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "IN:positive:text",
+      "clip": [
+        "3",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "IN:positive:text"
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "IN:negative:text",
+      "clip": [
+        "3",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "IN:negative:text"
+    }
+  },
+  "6": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "IN:reference_image:image"
+    },
+    "_meta": {
+      "title": "IN:reference_image:image"
+    }
+  },
+  "7": {
+    "class_type": "IPAdapterUnifiedLoader",
+    "inputs": {
+      "preset": "IN:ipadapter_preset:preset",
+      "model": [
+        "3",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "IN:ipadapter_preset:preset"
+    }
+  },
+  "8": {
+    "class_type": "IPAdapterAdvanced",
+    "inputs": {
+      "model": [
+        "7",
+        0
+      ],
+      "ipadapter": [
+        "7",
+        1
+      ],
+      "image": [
+        "6",
+        0
+      ],
+      "weight": 0.8,
+      "weight_type": "linear",
+      "combine_embeds": "concat",
+      "start_at": 0.0,
+      "end_at": 1.0,
+      "embeds_scaling": "V only"
+    },
+    "_meta": {
+      "title": "IP-Adapter Advanced"
+    }
+  },
+  "9": {
+    "class_type": "ControlNetLoader",
+    "inputs": {
+      "control_net_name": "IN:controlnet:control_net_name"
+    },
+    "_meta": {
+      "title": "IN:controlnet:control_net_name"
+    }
+  },
+  "10": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "IN:pose_image:image"
+    },
+    "_meta": {
+      "title": "IN:pose_image:image"
+    }
+  },
+  "11": {
+    "class_type": "ControlNetApplyAdvanced",
+    "inputs": {
+      "positive": [
+        "4",
+        0
+      ],
+      "negative": [
+        "5",
+        0
+      ],
+      "control_net": [
+        "9",
+        0
+      ],
+      "image": [
+        "10",
+        0
+      ],
+      "strength": 0.9,
+      "start_percent": 0.0,
+      "end_percent": 0.9,
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "Apply ControlNet"
+    }
+  },
+  "12": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "IN:source_image:image"
+    },
+    "_meta": {
+      "title": "IN:source_image:image"
+    }
+  },
+  "13": {
+    "class_type": "LoadImageMask",
+    "inputs": {
+      "image": "IN:mask_image:image",
+      "channel": "red"
+    },
+    "_meta": {
+      "title": "IN:mask_image:image"
+    }
+  },
+  "14": {
+    "class_type": "InpaintModelConditioning",
+    "inputs": {
+      "positive": [
+        "11",
+        0
+      ],
+      "negative": [
+        "11",
+        1
+      ],
+      "vae": [
+        "1",
+        2
+      ],
+      "pixels": [
+        "12",
+        0
+      ],
+      "mask": [
+        "13",
+        0
+      ],
+      "noise_mask": true
+    },
+    "_meta": {
+      "title": "Inpaint Conditioning"
+    }
+  },
+  "15": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": "IN:seed:seed",
+      "steps": 25,
+      "cfg": 6.0,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 1.0,
+      "model": [
+        "8",
+        0
+      ],
+      "positive": [
+        "14",
+        0
+      ],
+      "negative": [
+        "14",
+        1
+      ],
+      "latent_image": [
+        "14",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "IN:seed:seed"
+    }
+  },
+  "16": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "15",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "17": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "pixelforge/pose_inpaint",
+      "images": [
+        "16",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Save Image"
+    }
+  }
+}

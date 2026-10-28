@@ -24,6 +24,8 @@ dev = ["pytest", "pytest-asyncio", "ruff"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pixelforge"]
+# The root .gitignore ignores "data/"; hatchling honors it, so re-include the bundled pose data.
+artifacts = ["src/pixelforge/poses/data/**/*.json"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
