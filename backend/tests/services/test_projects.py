@@ -1,6 +1,7 @@
 import asyncio
 import io
 
+import numpy as np
 import pytest
 from PIL import Image, ImageOps
 from svc_helpers import TIMEOUT, BlockingClient, zip_names
@@ -11,6 +12,9 @@ from pixelforge.comfy.sprite_fake import SpriteFakeComfyClient
 from pixelforge.domain.models import DIRECTION_ORDER, Direction, PixelSettings
 from pixelforge.export.json_atlas import ExportIncomplete
 from pixelforge.jobs.queue import JobConflict, JobStatus
+from pixelforge.pixelart.palettes import character_palette
+from pixelforge.pixelart.pipeline import prepare_animation
+from pixelforge.services.processing import raw_names
 from pixelforge.services.projects import AnimationConfigIn, ProjectPatch
 from pixelforge.storage import keys
 from pixelforge.storage.projects import ProjectNotFound
@@ -373,3 +377,78 @@ async def test_cancel_queued_job_restores(make_svc, ready_views, jobs):
 
     await asyncio.wait_for(done(), TIMEOUT)
     assert status_of(slow, ready_views, d=Direction.down) == "ready"
+
+
+# -- review fixes ------------------------------------------------------------
+
+
+def _opaque_colors(img: Image.Image) -> set[tuple[int, int, int]]:
+    return {c[:3] for _, c in img.getcolors(img.width * img.height) if c[3] > 0}
+
+
+async def test_auto_palette_is_shared_by_every_animation(svc, run, walk_pid, storage, client):
+    # idle is generated with different colours after walk: walk must be refinalized too
+    responder = client.responder
+
+    def recolored(wf):
+        out = []
+        for img in responder(wf):
+            arr = np.array(img.convert("RGBA"))
+            arr[..., :3] = arr[..., [2, 0, 1]]  # rotate channels: gray stays gray
+            out.append(Image.fromarray(arr))
+        return out
+
+    few = PixelSettings.model_validate({"palette": {"mode": "auto", "colors": 4}})
+    svc.update_project(walk_pid, ProjectPatch(pixel_settings=few))
+    client.responder = recolored
+    svc.configure_animations(walk_pid, [AnimationConfigIn(type="idle", frame_count=4, fps=6)])
+    for j in svc.generate_animation(walk_pid, "idle"):
+        await run(j)
+    p = svc.repo.get(walk_pid)
+    prepared = []
+    used: set[tuple[int, int, int]] = set()
+    for anim in p.animations:
+        raw = {
+            d: [
+                storage.read_image(keys.raw_frame(walk_pid, anim.id, d, n))
+                for n in raw_names(storage, walk_pid, anim.id, d)
+            ]
+            for d in DIRECTION_ORDER
+        }
+        frames = prepare_animation(raw, p.pixel_settings, p.output_size, p.anchor())
+        prepared += [f for fs in frames.values() for f in fs]
+        for d in DIRECTION_ORDER:
+            for key in svc.preview(walk_pid, anim.id, d).frames:
+                used |= _opaque_colors(storage.read_image(key))
+    palette = set(character_palette(prepared, p.pixel_settings))
+    assert used <= palette and len(palette) <= p.pixel_settings.palette.colors
+
+
+async def test_recover_statuses(svc, walk_pid, storage, events):
+    p = svc.repo.get(walk_pid)
+    anim = p.animation("walk")
+    for d in DIRECTION_ORDER:
+        anim.directions[d].status = "generating"
+    svc.repo.save(p)
+    # down: 6 raw frames == frame_count; left: 3 raw frames; right: none; up: busy job
+    for name in ("003.png", "004.png", "005.png"):
+        storage.delete(keys.raw_frame(walk_pid, "walk", Direction.left, name))
+    storage.delete_prefix(keys.raw_dir(walk_pid, "walk", Direction.right))
+    svc.jobs.submit("animation", walk_pid, "walk/up", lambda ctx: asyncio.sleep(0))
+    sub = events.subscribe()
+    first = asyncio.ensure_future(anext(sub))
+    await asyncio.sleep(0)
+    svc.recover_statuses()
+    statuses = {d: status_of(svc, walk_pid, d=d) for d in DIRECTION_ORDER}
+    assert statuses == {
+        Direction.down: "ready",
+        Direction.left: "stale",
+        Direction.right: "empty",
+        Direction.up: "generating",
+    }
+    left = svc.repo.get(walk_pid).animation("walk").directions[Direction.left]
+    assert left.frames == ["000.png", "001.png", "002.png"]
+    assert svc.repo.get(walk_pid).animation("walk").directions[Direction.right].frames == []
+    event = await asyncio.wait_for(first, TIMEOUT)
+    assert event["type"] == "project" and event["project"]["id"] == walk_pid
+    await sub.aclose()

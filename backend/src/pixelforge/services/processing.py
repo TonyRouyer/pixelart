@@ -24,11 +24,15 @@ def reprocess(storage: Storage, project: Project, anim_id: str | None = None) ->
     """Rebuild processed/ frames from raw/ with one palette for the whole character.
 
     The palette is always computed from the prepared frames of every animation that has raw
-    frames; only the requested animation (all when None) is then finalized and written.
+    frames. In ``auto`` palette mode that palette changes with any raw frame, so every animation
+    is finalized again; with a preset/custom palette only ``anim_id`` (all when None) is.
     """
-    targets = [a.id for a in project.animations] if anim_id is None else [anim_id]
-    for t in targets:
-        project.animation(t)  # KeyError for an unknown animation
+    if anim_id is not None:
+        project.animation(anim_id)  # KeyError for an unknown animation
+    if anim_id is None or project.pixel_settings.palette.mode == "auto":
+        targets = [a.id for a in project.animations]
+    else:
+        targets = [anim_id]
     pid, settings = project.id, project.pixel_settings
     size, anchor = project.output_size, project.anchor()
 

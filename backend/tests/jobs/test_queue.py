@@ -494,3 +494,10 @@ async def test_on_cancel_after_finish_is_ignored(queue):
     queue.submit("t", "p", "a", fn)
     await wait_idle(queue)
     ctxs[0].on_cancel(lambda: _set(asyncio.Event()))  # must not raise
+
+
+def test_targets_overlap():
+    from pixelforge.jobs.queue import targets_overlap
+
+    assert targets_overlap("walk/down", "walk/down/2") and targets_overlap("walk", "walk/up")
+    assert not targets_overlap("walk/down", "walk/downx") and not targets_overlap("a", "b")

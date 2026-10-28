@@ -7,7 +7,14 @@ from collections.abc import Awaitable, Callable
 from pixelforge.comfy.client import ComfyError
 from pixelforge.comfy.health import HealthReport
 from pixelforge.generation.base import GenerationError
-from pixelforge.jobs.queue import Job, JobConflict, JobContext, JobQueue, JobStatus
+from pixelforge.jobs.queue import (
+    Job,
+    JobConflict,
+    JobContext,
+    JobQueue,
+    JobStatus,
+    targets_overlap,
+)
 
 Health = Callable[[], Awaitable[HealthReport]]
 Interrupt = Callable[[], Awaitable[None]]
@@ -15,10 +22,6 @@ JobBody = Callable[[JobContext], Awaitable[None]]
 Restore = Callable[[], None]
 
 _ACTIVE = (JobStatus.queued, JobStatus.running)
-
-
-def _overlaps(a: str, b: str) -> bool:
-    return a == b or a.startswith(b + "/") or b.startswith(a + "/")
 
 
 def not_ready_error(report: HealthReport) -> GenerationError:
@@ -79,10 +82,18 @@ class GpuJobs:
         if restore is not None and self.jobs.get(job_id).status == JobStatus.cancelled:
             restore()
 
+    def busy(self, pid: str, target: str) -> Job | None:
+        """The active job of ``pid`` overlapping ``target``, if any."""
+        for job in self.jobs.list(pid):
+            if job.status in _ACTIVE and targets_overlap(job.target, target):
+                return job
+        return None
+
     def ensure_free(self, pid: str, *targets: str) -> None:
         """Raise ``JobConflict`` if an active job of ``pid`` overlaps one of ``targets``."""
-        for job in self.jobs.list(pid):
-            if job.status in _ACTIVE and any(_overlaps(job.target, t) for t in targets):
+        for t in targets:
+            job = self.busy(pid, t)
+            if job is not None:
                 raise JobConflict(job.id)
 
     async def _ensure_comfy(self) -> None:

@@ -70,7 +70,8 @@ class JobContext:
             hooks.append(cb)
 
 
-def _overlaps(a: str, b: str) -> bool:
+def targets_overlap(a: str, b: str) -> bool:
+    """True when one target equals the other or lies under it (``walk/down`` vs ``walk/down/2``)."""
     return a == b or a.startswith(b + "/") or b.startswith(a + "/")
 
 
@@ -95,7 +96,7 @@ class JobQueue:
             if (
                 other.project_id == project_id
                 and other.status in _ACTIVE
-                and _overlaps(other.target, target)
+                and targets_overlap(other.target, target)
             ):
                 raise JobConflict(other.id)
         job = Job(

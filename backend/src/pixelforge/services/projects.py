@@ -352,6 +352,33 @@ class ProjectService:
 
     # -- jobs -------------------------------------------------------------
 
+    def recover_statuses(self) -> None:
+        """Settle directions left "generating" by a crash (call after ``JobQueue.start``).
+
+        A direction with no active job on its target becomes "ready" when it has
+        ``frame_count`` raw frames, "stale" when it has some, "empty" otherwise; its frame list
+        is reset to the raw files when it names missing ones, and the project is reprocessed.
+        """
+        for p in self.repo.list():
+            changed = False
+            for anim in p.animations:
+                for d, state in anim.directions.items():
+                    if state.status != "generating":
+                        continue
+                    if self._gpu.busy(p.id, f"{anim.id}/{d.value}") is not None:
+                        continue
+                    names = processing.raw_names(self.storage, p.id, anim.id, d)
+                    if not state.frames or not set(state.frames) <= set(names):
+                        state.frames = names
+                    if not names:
+                        state.status = "empty"
+                    else:
+                        state.status = "ready" if len(names) == anim.frame_count else "stale"
+                    changed = True
+            if changed:
+                processing.reprocess(self.storage, p)
+                self._save(p)
+
     async def cancel_job(self, job_id: str) -> None:
         """Cancel a job and restore what it had marked as generating, even if it never ran."""
         await self._gpu.cancel(job_id)
