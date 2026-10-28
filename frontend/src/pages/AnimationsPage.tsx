@@ -6,6 +6,7 @@ import { ErrorNote, toErrorInfo } from "../components/ErrorNote";
 import { NumberField } from "../components/NumberField";
 import { ProjectNav } from "../components/ProjectNav";
 import { useProject } from "../hooks/useProject";
+import { removalPrompt, removedAnimations } from "../lib/animations";
 
 type Err = { message: string; hint: string | null } | null;
 
@@ -61,13 +62,14 @@ export function AnimationsPage() {
     setLoaded(true);
   }, [project, loaded]);
 
+  /** Run `action`; `done` is shown unless the action resolves to `false` (cancelled). */
   const run = async (action: () => Promise<unknown>, done?: string) => {
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      await action();
-      if (done) setNotice(done);
+      const result = await action();
+      if (done && result !== false) setNotice(done);
     } catch (e) {
       setError(toErrorInfo(e));
     } finally {
@@ -88,8 +90,17 @@ export function AnimationsPage() {
   const saved = new Set(project.animations.map((a) => a.type));
 
   const save = async () => {
-    await api.configureAnimations(id, configs());
+    const wanted = configs();
+    const removed = removedAnimations(
+      project.animations.map((a) => a.type),
+      wanted.map((c) => c.type),
+    );
+    if (removed.length && !window.confirm(removalPrompt(removed.map((t) => ANIMATION_LABEL[t])))) {
+      return false;
+    }
+    await api.configureAnimations(id, wanted);
     await reload();
+    return true;
   };
 
   return (
