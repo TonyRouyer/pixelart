@@ -64,8 +64,8 @@ def create_app(settings: Settings | None = None, comfy: ComfyClient | None = Non
         app.state.health = health
         app.state.service = service
         await queue.start()
-        service.recover_statuses()
         try:
+            service.recover_statuses()
             yield
         finally:
             await queue.stop()

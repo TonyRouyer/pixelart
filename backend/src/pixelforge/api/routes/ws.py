@@ -15,7 +15,7 @@ async def events_socket(websocket: WebSocket, bus: Bus) -> None:
     async with aclosing(bus.subscribe()) as events:
         # start waiting before accepting so no event published after the handshake is missed
         pending = asyncio.ensure_future(events.__anext__())
-        await websocket.accept()
+        tasks: list[asyncio.Future] = []
 
         async def pump() -> None:
             nonlocal pending
@@ -28,8 +28,9 @@ async def events_socket(websocket: WebSocket, bus: Bus) -> None:
             while (await websocket.receive())["type"] != "websocket.disconnect":
                 pass
 
-        tasks = [asyncio.ensure_future(pump()), asyncio.ensure_future(watch())]
         try:
+            await websocket.accept()
+            tasks = [asyncio.ensure_future(pump()), asyncio.ensure_future(watch())]
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         finally:
             for task in (*tasks, pending):

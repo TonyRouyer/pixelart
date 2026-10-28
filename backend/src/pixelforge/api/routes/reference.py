@@ -31,10 +31,10 @@ async def upload_reference(pid: str, file: UploadFile, svc: Service) -> UploadRe
 
 
 @router.post("/projects/{pid}/reference/generate", status_code=202)
-def generate_reference(pid: str, body: GenerateReference, svc: Service) -> Job:
+async def generate_reference(pid: str, body: GenerateReference, svc: Service) -> Job:
     return svc.generate_reference(pid, body.prompt, body.n)
 
 
 @router.post("/projects/{pid}/reference/select")
-def select_reference(pid: str, body: SelectReference, svc: Service) -> Project:
+async def select_reference(pid: str, body: SelectReference, svc: Service) -> Project:
     return svc.select_reference(pid, body.index)

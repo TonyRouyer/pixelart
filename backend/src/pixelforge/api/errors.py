@@ -29,6 +29,7 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(KeyError)
     async def _key_error(request: Request, exc: KeyError) -> JSONResponse:
+        log.warning("KeyError on %s %s", request.method, request.url.path, exc_info=exc)
         # unknown animation / job ids surface as KeyError from the domain layer
         return error_response(404, "not_found", f"not found: {exc.args[0] if exc.args else ''}")
 

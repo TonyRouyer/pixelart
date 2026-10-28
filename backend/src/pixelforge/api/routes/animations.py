@@ -18,26 +18,26 @@ class FramesBody(BaseModel):
 
 
 @router.post("/projects/{pid}/animations")
-def configure_animations(pid: str, body: list[AnimationConfigIn], svc: Service) -> Project:
+async def configure_animations(pid: str, body: list[AnimationConfigIn], svc: Service) -> Project:
     return svc.configure_animations(pid, body)
 
 
 @router.post("/projects/{pid}/animations/{anim}/generate", status_code=202)
-def generate_animation(
+async def generate_animation(
     pid: str, anim: str, svc: Service, body: GenerateAnimation | None = None
 ) -> list[Job]:
     return svc.generate_animation(pid, anim, body.directions if body else None)
 
 
 @router.post("/projects/{pid}/animations/{anim}/{direction}/frames/{i}/regenerate", status_code=202)
-def regenerate_frame(pid: str, anim: str, direction: Direction, i: int, svc: Service) -> Job:
+async def regenerate_frame(pid: str, anim: str, direction: Direction, i: int, svc: Service) -> Job:
     """Regenerate one frame. ``i`` is the raw file number (``003.png`` -> 3), not the position
     of the frame in the ordered ``frames`` list."""
     return svc.regenerate_frame(pid, anim, direction, i)
 
 
 @router.put("/projects/{pid}/animations/{anim}/{direction}/frames")
-def set_frames(
+async def set_frames(
     pid: str, anim: str, direction: Direction, body: FramesBody, svc: Service
 ) -> Project:
     """Set the ordered list of raw frame files (e.g. ``["000.png", "002.png"]``) to keep."""
@@ -54,5 +54,5 @@ async def import_frame(
 
 
 @router.get("/projects/{pid}/preview/{anim}/{direction}")
-def preview(pid: str, anim: str, direction: Direction, svc: Service) -> PreviewOut:
+async def preview(pid: str, anim: str, direction: Direction, svc: Service) -> PreviewOut:
     return svc.preview(pid, anim, direction)

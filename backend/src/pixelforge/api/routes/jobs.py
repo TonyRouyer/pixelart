@@ -7,12 +7,12 @@ router = APIRouter()
 
 
 @router.get("/jobs")
-def list_jobs(svc: Service, project_id: str | None = None) -> list[Job]:
+async def list_jobs(svc: Service, project_id: str | None = None) -> list[Job]:
     return svc.jobs.list(project_id)
 
 
 @router.get("/jobs/{job_id}")
-def get_job(job_id: str, svc: Service) -> Job:
+async def get_job(job_id: str, svc: Service) -> Job:
     return svc.jobs.get(job_id)  # unknown id: KeyError -> 404
 
 

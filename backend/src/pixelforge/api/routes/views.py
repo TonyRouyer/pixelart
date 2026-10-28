@@ -13,10 +13,10 @@ class GenerateViews(BaseModel):
 
 
 @router.post("/projects/{pid}/views/generate", status_code=202)
-def generate_views(pid: str, svc: Service, body: GenerateViews | None = None) -> Job:
+async def generate_views(pid: str, svc: Service, body: GenerateViews | None = None) -> Job:
     return svc.generate_views(pid, body.direction if body else None)
 
 
 @router.post("/projects/{pid}/views/{direction}/validate")
-def validate_view(pid: str, direction: Direction, svc: Service) -> Project:
+async def validate_view(pid: str, direction: Direction, svc: Service) -> Project:
     return svc.validate_view(pid, direction)

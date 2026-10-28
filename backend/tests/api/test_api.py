@@ -231,3 +231,42 @@ def test_palette_presets(client):
 def test_cors_header(client):
     r = client.get("/api/health", headers={"Origin": "http://localhost:5173"})
     assert r.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
+def test_job_progresses_without_further_requests(client):
+    """A job submitted by a route must run on the event loop with no other HTTP traffic."""
+    import time
+
+    pid = make_project(client)
+    with client.websocket_connect("/api/ws") as ws:
+        job_id = client.post(
+            f"/api/projects/{pid}/reference/generate", json={"prompt": "k"}
+        ).json()["id"]
+        statuses = []
+        while "succeeded" not in statuses:
+            event = ws.receive_json()
+            if event["type"] == "job" and event["job"]["id"] == job_id:
+                statuses.append(event["job"]["status"])
+    assert statuses[0] == "queued" and "running" in statuses
+    time.sleep(0)  # no HTTP request was needed to move the job along
+
+
+def test_delete_project_with_active_job_is_409(client):
+    import asyncio
+
+    pid = make_project(client)
+    queue = client.app.state.queue
+    gate = asyncio.Event()
+
+    async def start():
+        async def hold(ctx):
+            await gate.wait()
+
+        return queue.submit("hold", pid, "reference", hold)
+
+    job = client.portal.call(start)
+    r = client.delete(f"/api/projects/{pid}")
+    assert (r.status_code, r.json()["error"]["code"]) == (409, "conflict")
+    client.portal.call(lambda: gate.set())
+    assert wait_job(client, job.id)["status"] == "succeeded"
+    assert client.delete(f"/api/projects/{pid}").status_code == 204

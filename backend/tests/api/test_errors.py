@@ -62,3 +62,9 @@ def test_unknown_exception_is_500_internal(caplog):
     assert (status, err["code"]) == (500, "internal")
     assert "secret" not in err["message"]
     assert any(r.exc_info for r in caplog.records)
+
+
+def test_key_error_is_404_and_logged(caplog):
+    status, err = _error(KeyError("walk"))
+    assert (status, err["code"]) == (404, "not_found")
+    assert any(r.levelname == "WARNING" and r.exc_info for r in caplog.records)

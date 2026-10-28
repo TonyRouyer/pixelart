@@ -15,27 +15,26 @@ class ProjectCreate(BaseModel):
 
 
 @router.get("/projects")
-def list_projects(svc: Service) -> list[Project]:
+async def list_projects(svc: Service) -> list[Project]:
     return svc.repo.list()
 
 
 @router.post("/projects", status_code=201)
-def create_project(body: ProjectCreate, svc: Service) -> Project:
+async def create_project(body: ProjectCreate, svc: Service) -> Project:
     return svc.create_project(body.name, body.output_size, body.style_prompt)
 
 
 @router.get("/projects/{pid}")
-def get_project(pid: str, svc: Service) -> Project:
+async def get_project(pid: str, svc: Service) -> Project:
     return svc.repo.get(pid)
 
 
 @router.patch("/projects/{pid}")
-def patch_project(pid: str, body: ProjectPatch, svc: Service) -> Project:
+async def patch_project(pid: str, body: ProjectPatch, svc: Service) -> Project:
     return svc.update_project(pid, body)
 
 
 @router.delete("/projects/{pid}", status_code=204)
-def delete_project(pid: str, svc: Service) -> Response:
-    svc.repo.get(pid)  # 404 when unknown
-    svc.repo.delete(pid)
+async def delete_project(pid: str, svc: Service) -> Response:
+    svc.delete_project(pid)
     return Response(status_code=204)

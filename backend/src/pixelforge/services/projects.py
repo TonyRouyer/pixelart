@@ -25,7 +25,7 @@ from pixelforge.domain.models import (
 from pixelforge.generation.pose_generator import AnimationGenerator
 from pixelforge.generation.reference import ReferenceGenerator
 from pixelforge.jobs.events import EventBus
-from pixelforge.jobs.queue import Job, JobContext, JobQueue
+from pixelforge.jobs.queue import Job, JobConflict, JobContext, JobQueue, JobStatus
 from pixelforge.pixelart.palettes import PRESET_PALETTES
 from pixelforge.poses.library import load_clip, load_neutral
 from pixelforge.poses.model import sample
@@ -114,6 +114,14 @@ class ProjectService:
             processing.reprocess(self.storage, p)
         self._publish(p)
         return p
+
+    def delete_project(self, pid: str) -> None:
+        """Delete a project; ``JobConflict`` while one of its jobs is queued or running."""
+        self.repo.get(pid)
+        for job in self.jobs.list(pid):
+            if job.status in (JobStatus.queued, JobStatus.running):
+                raise JobConflict(job.id)
+        self.repo.delete(pid)
 
     # -- reference --------------------------------------------------------
 

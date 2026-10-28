@@ -8,7 +8,7 @@ router = APIRouter()
 
 
 @router.get("/files/{key:path}", response_model=None)
-def get_file(key: str, storage: Storage) -> FileResponse | JSONResponse:
+async def get_file(key: str, storage: Storage) -> FileResponse | JSONResponse:
     """Serve a file of the data directory; only keys under ``projects/`` are reachable."""
     if (
         not key.startswith("projects/")
