@@ -65,7 +65,9 @@ class JobContext:
         self._queue._set_progress(self._job_id, value)
 
     def on_cancel(self, cb: CancelHook) -> None:
-        self._queue._hooks[self._job_id].append(cb)
+        hooks = self._queue._hooks.get(self._job_id)
+        if hooks is not None:  # job already finished: nothing left to interrupt
+            hooks.append(cb)
 
 
 def _overlaps(a: str, b: str) -> bool:
@@ -84,6 +86,7 @@ class JobQueue:
         self._worker: asyncio.Task | None = None
         self._current: tuple[str, asyncio.Task] | None = None
         self._recovered = False
+        self._cancelling: set[str] = set()
 
     # -- public API -------------------------------------------------------
 
@@ -121,7 +124,8 @@ class JobQueue:
         job = self._jobs[job_id]
         if job.status == JobStatus.queued:
             self._finish(job, JobStatus.cancelled)
-        elif job.status == JobStatus.running:
+        elif job.status == JobStatus.running and job_id not in self._cancelling:
+            self._cancelling.add(job_id)
             for hook in list(self._hooks.get(job_id, [])):
                 try:
                     await hook()
@@ -181,19 +185,36 @@ class JobQueue:
             job = self._jobs.get(job_id)
             if job is None or job.status != JobStatus.queued:
                 continue  # cancelled while waiting
-            await self._execute(job)
+            try:
+                await self._execute(job)
+            except Exception:  # backstop: the worker must outlive any single job
+                log.exception("unexpected error while running job %s", job_id)
+                if job.status in _ACTIVE:
+                    self._finish(
+                        job, JobStatus.failed, {"code": "internal", "message": "worker error"}
+                    )
 
     async def _execute(self, job: Job) -> None:
-        job.status = JobStatus.running
-        self._changed(job)
-        task = asyncio.ensure_future(self._fns[job.id](JobContext(self, job.id)))
-        self._current = (job.id, task)
+        task: asyncio.Future | None = None
         try:
+            job.status = JobStatus.running
+            self._changed(job)
+            task = asyncio.ensure_future(self._fns[job.id](JobContext(self, job.id)))
+            self._current = (job.id, task)
             await asyncio.wait({task})
+        except asyncio.CancelledError:  # the worker itself is being stopped
+            if task is not None and not task.done():
+                task.cancel()
+            if job.status == JobStatus.running:
+                self._finish(job, JobStatus.cancelled)
+            raise
+        except Exception as e:  # the callable could not even be started
+            log.exception("job %s could not start", job.id)
+            if job.status == JobStatus.running:
+                self._finish(job, JobStatus.failed, {"code": "internal", "message": str(e)})
+            return
         finally:
             self._current = None
-            if not task.done():  # worker cancelled mid-job
-                task.cancel()
         if job.status != JobStatus.running:
             return  # already finalised by cancel()
         if task.cancelled():
@@ -203,6 +224,8 @@ class JobQueue:
         if exc is None:
             job.progress = 1.0
             self._finish(job, JobStatus.succeeded)
+        elif job.id in self._cancelling:  # e.g. the interrupt hook made the job raise
+            self._finish(job, JobStatus.cancelled)
         elif isinstance(exc, GenerationError):
             error = {"code": exc.code, "message": exc.message, "hint": exc.hint}
             self._finish(job, JobStatus.failed, error)
@@ -216,6 +239,7 @@ class JobQueue:
         job.finished_at = datetime.now(UTC)
         self._fns.pop(job.id, None)
         self._hooks.pop(job.id, None)
+        self._cancelling.discard(job.id)
         self._changed(job)
 
     def _set_progress(self, job_id: str, value: float) -> None:

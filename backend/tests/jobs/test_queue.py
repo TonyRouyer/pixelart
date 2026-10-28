@@ -399,3 +399,98 @@ async def test_list_filters_by_project(queue):
     queue.submit("t", "p2", "a", slow)
     assert [j.project_id for j in queue.list("p2")] == ["p2"]
     assert len(queue.list()) == 2
+
+
+async def test_factory_raising_synchronously_does_not_stall_queue(queue):
+    def bad(ctx):
+        raise KeyError("nope")
+
+    ran = asyncio.Event()
+
+    async def good(ctx):
+        ran.set()
+
+    first = queue.submit("t", "p", "a", bad)
+    second = queue.submit("t", "p", "b", good)
+    await wait_idle(queue)
+    assert queue.get(first.id).status == JobStatus.failed
+    assert queue.get(first.id).error["code"] == "internal"
+    assert queue.get(second.id).status == JobStatus.succeeded
+    assert ran.is_set()
+
+
+async def test_factory_returning_non_awaitable_fails_job(queue):
+    first = queue.submit("t", "p", "a", lambda ctx: None)
+    await wait_idle(queue)
+    assert queue.get(first.id).status == JobStatus.failed
+
+
+async def test_stop_leaves_nothing_running_when_job_ends_during_hooks(storage, bus):
+    q = JobQueue(storage, bus)
+    await q.start()
+
+    async def slow_hook():
+        await asyncio.sleep(0.1)
+
+    async def x(ctx):
+        ctx.on_cancel(slow_hook)
+        await asyncio.sleep(0.02)  # ends on its own while stop() awaits the hook
+
+    first = q.submit("t", "p", "x", x)
+    second = q.submit("t", "p", "y", slow)
+    await until_running(q, first.id)
+    await asyncio.wait_for(q.stop(), TIMEOUT)
+    assert q.get(first.id).status == JobStatus.succeeded
+    assert q.get(second.id).status == JobStatus.cancelled
+    assert not any(j.status in (JobStatus.queued, JobStatus.running) for j in q.list())
+    q.submit("t", "p", "y", slow)  # no stale conflict
+
+
+async def test_cancel_recorded_as_cancelled_when_fn_raises_from_interrupt(queue):
+    async def fn(ctx):
+        gone = asyncio.Event()
+
+        async def interrupt():
+            gone.set()
+            await asyncio.sleep(0.02)
+
+        ctx.on_cancel(interrupt)
+        await gone.wait()
+        raise GenerationError("cancelled", "interrupted")
+
+    job = queue.submit("t", "p", "a", fn)
+    await until_running(queue, job.id)
+    await queue.cancel(job.id)
+    await wait_idle(queue)
+    done = queue.get(job.id)
+    assert done.status == JobStatus.cancelled
+    assert done.error is None
+
+
+async def test_double_cancel_runs_hooks_once(queue):
+    calls = []
+
+    async def hook():
+        calls.append(1)
+        await asyncio.sleep(0.02)
+
+    async def fn(ctx):
+        ctx.on_cancel(hook)
+        await asyncio.sleep(10)
+
+    job = queue.submit("t", "p", "a", fn)
+    await until_running(queue, job.id)
+    await asyncio.gather(queue.cancel(job.id), queue.cancel(job.id))
+    assert calls == [1]
+    assert queue.get(job.id).status == JobStatus.cancelled
+
+
+async def test_on_cancel_after_finish_is_ignored(queue):
+    ctxs = []
+
+    async def fn(ctx):
+        ctxs.append(ctx)
+
+    queue.submit("t", "p", "a", fn)
+    await wait_idle(queue)
+    ctxs[0].on_cancel(lambda: _set(asyncio.Event()))  # must not raise
