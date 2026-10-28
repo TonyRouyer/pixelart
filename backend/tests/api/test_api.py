@@ -24,6 +24,21 @@ def wait_job(client, job_id, timeout=20.0):
     raise AssertionError("job did not finish")
 
 
+def close_ws(client, ws, timeout=5.0):
+    """Close a test socket and wait until the route finished unsubscribing.
+
+    Starlette's TestClient cancels the app task right after queueing the disconnect; if the
+    handler is still cleaning up, that cancellation surfaces as a CancelledError in the test.
+    """
+    import time
+
+    ws.close()
+    end = time.monotonic() + timeout
+    while client.app.state.bus.subscriber_count and time.monotonic() < end:
+        time.sleep(0.01)
+    assert client.app.state.bus.subscriber_count == 0
+
+
 def make_project(client, **extra) -> str:
     return client.post("/api/projects", json={"name": "Chevalier", **extra}).json()["id"]
 
@@ -88,6 +103,7 @@ def test_generate_returns_202_and_ws_progress(client):
             if job.get("id") == job_id and job["status"] in ("succeeded", "failed"):
                 assert job["status"] == "succeeded"
                 break
+        close_ws(client, ws)
     assert "job" in seen
 
 
@@ -235,8 +251,6 @@ def test_cors_header(client):
 
 def test_job_progresses_without_further_requests(client):
     """A job submitted by a route must run on the event loop with no other HTTP traffic."""
-    import time
-
     pid = make_project(client)
     with client.websocket_connect("/api/ws") as ws:
         job_id = client.post(
@@ -247,8 +261,8 @@ def test_job_progresses_without_further_requests(client):
             event = ws.receive_json()
             if event["type"] == "job" and event["job"]["id"] == job_id:
                 statuses.append(event["job"]["status"])
+        close_ws(client, ws)
     assert statuses[0] == "queued" and "running" in statuses
-    time.sleep(0)  # no HTTP request was needed to move the job along
 
 
 def test_delete_project_with_active_job_is_409(client):
