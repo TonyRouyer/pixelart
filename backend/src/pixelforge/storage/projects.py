@@ -4,22 +4,17 @@ from __future__ import annotations
 
 import re
 import secrets
-import unicodedata
 
 from pixelforge.domain.models import Project
 from pixelforge.storage import keys
 from pixelforge.storage.base import Storage
+from pixelforge.text import slugify
 
 
 class ProjectNotFound(LookupError):
     def __init__(self, pid: str) -> None:
         super().__init__(f"project not found: {pid}")
         self.pid = pid
-
-
-def _slug(name: str) -> str:
-    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
-    return re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-") or "project"
 
 
 class ProjectRepository:
@@ -29,7 +24,7 @@ class ProjectRepository:
     def create(self, name: str, output_size: int = 64, style_prompt: str | None = None) -> Project:
         extra = {"style_prompt": style_prompt} if style_prompt is not None else {}
         project = Project(
-            id=f"{_slug(name)}-{secrets.token_hex(2)}",
+            id=f"{slugify(name)}-{secrets.token_hex(2)}",
             name=name,
             seed=secrets.randbelow(2**31),
             output_size=output_size,
