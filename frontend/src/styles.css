@@ -1,0 +1,58 @@
+:root {
+  color-scheme: dark;
+  --bg: #16181d;
+  --panel: #1f232b;
+  --border: #2f3541;
+  --text: #e4e7ec;
+  --muted: #8b93a1;
+  --accent: #6aa5ff;
+  --warn: #e0a93b;
+  --error: #e5626a;
+  --ok: #5cc28a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, sans-serif;
+}
+
+button {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+
+.pixelated { image-rendering: pixelated; }
+.muted { color: var(--muted); font-size: 0.9em; }
+
+.banner { padding: 8px 16px; border-bottom: 1px solid var(--border); }
+.banner-warn { background: #3a2f14; color: var(--warn); }
+.banner-error { background: #3a1a1d; color: var(--error); }
+
+.layout { display: flex; gap: 16px; align-items: flex-start; padding: 16px; }
+.content { flex: 1; min-width: 0; }
+
+.jobs-panel {
+  width: 320px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+}
+.jobs-toggle { width: 100%; text-align: left; }
+.jobs-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.job { border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; }
+.job-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.job-status { margin-left: auto; }
+.job-succeeded .job-status { color: var(--ok); }
+.job-failed .job-status { color: var(--error); }
+.job-error { color: var(--error); margin-top: 4px; }
+.job progress { width: 100%; }
