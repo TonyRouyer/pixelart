@@ -317,3 +317,46 @@ def test_health_is_cached_between_polls(settings):
         for _ in range(3):
             assert c.get("/api/health").json()["comfy"]["ok"] is True
     assert Counting.calls == 1
+
+
+def test_invalid_outline_color_is_422_and_project_unchanged(client):
+    pid = make_project(client)
+    before = client.get(f"/api/projects/{pid}").json()
+    r = client.patch(
+        f"/api/projects/{pid}",
+        json={"output_size": 32, "pixel_settings": {"outline": {"enabled": True, "color": "red"}}},
+    )
+    assert r.status_code == 422
+    assert client.get(f"/api/projects/{pid}").json() == before
+
+
+def test_configure_animations_removes_unlisted(client):
+    pid = make_project(client)
+    url = f"/api/projects/{pid}/animations"
+    r = client.post(url, json=[{"type": "idle", "frame_count": 4, "fps": 6}])
+    assert [a["id"] for a in r.json()["animations"]] == ["idle"]
+    r = client.post(url, json=[{"type": "walk", "frame_count": 6, "fps": 10}])
+    assert r.status_code == 200 and [a["id"] for a in r.json()["animations"]] == ["walk"]
+
+
+def test_configure_animations_removal_with_active_job_is_409(client):
+    import asyncio
+
+    pid = make_project(client)
+    url = f"/api/projects/{pid}/animations"
+    client.post(url, json=[{"type": "idle", "frame_count": 4, "fps": 6}])
+    queue = client.app.state.queue
+    gate = asyncio.Event()
+
+    async def start():
+        async def hold(ctx):
+            await gate.wait()
+
+        return queue.submit("animation", pid, "idle/down", hold)
+
+    job = client.portal.call(start)
+    r = client.post(url, json=[])
+    assert (r.status_code, r.json()["error"]["code"]) == (409, "conflict")
+    assert [a["id"] for a in client.get(f"/api/projects/{pid}").json()["animations"]] == ["idle"]
+    client.portal.call(lambda: gate.set())
+    assert wait_job(client, job.id)["status"] == "succeeded"

@@ -81,7 +81,7 @@ class PaletteSettings(BaseModel):
 
 class OutlineSettings(BaseModel):
     enabled: bool = False
-    color: str = "#1a1a1a"
+    color: str = Field(default="#1a1a1a", pattern=_HEX_COLOR.pattern)
 
 
 class PixelSettings(BaseModel):

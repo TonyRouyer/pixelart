@@ -109,11 +109,9 @@ class ProjectService:
             value = getattr(patch, field)
             if value is not None:
                 setattr(p, field, value)
-        self.repo.save(p)
         if (p.output_size, p.pixel_settings) != before:
-            processing.reprocess(self.storage, p)
-        self._publish(p)
-        return p
+            processing.reprocess(self.storage, p)  # before saving: a failure changes nothing
+        return self._save(p)
 
     def delete_project(self, pid: str) -> None:
         """Delete a project; ``JobConflict`` while one of its jobs is queued or running."""
@@ -223,7 +221,15 @@ class ProjectService:
     # -- animations -------------------------------------------------------
 
     def configure_animations(self, pid: str, configs: list[AnimationConfigIn]) -> Project:
+        """Set the complete list of animations.
+
+        Animations absent from ``configs`` are deleted with their frames (``JobConflict`` while
+        one of their jobs is active); the project is then reprocessed (shared auto palette).
+        """
         p = self.repo.get(pid)
+        wanted = {c.type.value for c in configs}
+        removed = [a.id for a in p.animations if a.id not in wanted]
+        self._gpu.ensure_free(pid, *removed)
         for c in configs:
             try:
                 anim = p.animation(c.type.value)
@@ -239,6 +245,11 @@ class ProjectService:
                         count = len(processing.raw_names(self.storage, pid, anim.id, d))
                         state.status = "ready" if count == c.frame_count else "stale"
             anim.fps = c.fps
+        if removed:
+            p.animations = [a for a in p.animations if a.id in wanted]
+            for anim_id in removed:
+                self.storage.delete_prefix(keys.animation_dir(pid, anim_id))
+            processing.reprocess(self.storage, p)
         return self._save(p)
 
     def generate_animation(

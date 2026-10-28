@@ -37,6 +37,10 @@ def view_image(pid: str, d: Direction | str) -> str:
     return f"projects/{pid}/views/{_d(d)}.png"
 
 
+def animation_dir(pid: str, anim: str) -> str:
+    return f"projects/{pid}/animations/{anim}"
+
+
 def raw_dir(pid: str, anim: str, d: Direction | str) -> str:
     return f"projects/{pid}/animations/{anim}/{_d(d)}/raw"
 

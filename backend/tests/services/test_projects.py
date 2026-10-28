@@ -14,6 +14,7 @@ from pixelforge.export.json_atlas import ExportIncomplete
 from pixelforge.jobs.queue import JobConflict, JobStatus
 from pixelforge.pixelart.palettes import character_palette
 from pixelforge.pixelart.pipeline import prepare_animation
+from pixelforge.services import processing
 from pixelforge.services.processing import raw_names
 from pixelforge.services.projects import AnimationConfigIn, ProjectPatch
 from pixelforge.storage import keys
@@ -174,9 +175,53 @@ async def test_configure_adds_and_updates(svc):
     )
     bow = p.animation("attack_bow")
     assert (bow.frame_count, bow.fps, bow.loop) == (8, 15, False)
-    p = svc.configure_animations(p.id, [AnimationConfigIn(type="idle", frame_count=4, fps=12)])
+    p = svc.configure_animations(
+        p.id,
+        [
+            AnimationConfigIn(type="idle", frame_count=4, fps=12),
+            AnimationConfigIn(type="attack_bow", frame_count=8, fps=15),
+        ],
+    )
     assert [a.id for a in p.animations] == ["idle", "attack_bow"]
     assert p.animation("idle").fps == 12
+
+
+async def test_configure_removes_absent_animations(svc, run, walk_pid, storage, monkeypatch):
+    pid = walk_pid
+    svc.configure_animations(pid, WALK_AND_IDLE)
+    await run(svc.generate_animation(pid, "idle", [Direction.down])[0])
+    assert storage.list(f"projects/{pid}/animations/idle")
+    with pytest.raises(ExportIncomplete):
+        svc.export(pid)  # idle is only generated for "down"
+
+    calls = []
+    real = processing.reprocess
+    monkeypatch.setattr(
+        processing, "reprocess", lambda *a, **k: calls.append(a[1:]) or real(*a, **k)
+    )
+    p = svc.configure_animations(pid, [AnimationConfigIn(type="walk", frame_count=6, fps=10)])
+    assert [a.id for a in p.animations] == ["walk"]
+    assert [a.id for a in svc.repo.get(pid).animations] == ["walk"]
+    assert storage.list(f"projects/{pid}/animations/idle") == []
+    assert not storage.path(f"projects/{pid}/animations/idle").exists()
+    assert len(calls) == 1 and calls[0][0].id == pid  # whole project reprocessed
+    assert zip_names(storage, svc.export(pid))
+
+
+async def test_configure_empty_list_removes_everything(svc, walk_pid, storage):
+    p = svc.configure_animations(walk_pid, [])
+    assert p.animations == []
+    assert storage.list(f"projects/{walk_pid}/animations") == []
+
+
+async def test_configure_removal_with_active_job_is_conflict(svc, walk_pid, storage):
+    pid = walk_pid
+    svc.generate_animation(pid, "walk", [Direction.down])  # queued, the queue is not started
+    before = storage.list(f"projects/{pid}/animations/walk")
+    with pytest.raises(JobConflict):
+        svc.configure_animations(pid, [AnimationConfigIn(type="idle", frame_count=4, fps=6)])
+    assert [a.id for a in svc.repo.get(pid).animations] == ["walk"]
+    assert storage.list(f"projects/{pid}/animations/walk") == before
 
 
 async def test_frame_count_change_marks_stale(svc, walk_pid):
@@ -256,8 +301,14 @@ async def test_settings_change_reprocesses(svc, walk_pid, storage):
         assert img.size == (32, 32)
 
 
+WALK_AND_IDLE = [
+    AnimationConfigIn(type="walk", frame_count=6, fps=10),
+    AnimationConfigIn(type="idle", frame_count=4, fps=6),
+]
+
+
 async def test_custom_palette_applies_to_every_animation(svc, run, walk_pid, storage):
-    svc.configure_animations(walk_pid, [AnimationConfigIn(type="idle", frame_count=4, fps=6)])
+    svc.configure_animations(walk_pid, WALK_AND_IDLE)
     for j in svc.generate_animation(walk_pid, "idle"):
         await run(j)
     settings = PixelSettings.model_validate(
@@ -290,6 +341,17 @@ async def test_update_project_fields(svc, events):
     event = await asyncio.wait_for(first, TIMEOUT)
     assert event == {"type": "project", "project": out.model_dump(mode="json")}
     await sub.aclose()
+
+
+async def test_failed_reprocess_leaves_project_unchanged(svc, walk_pid, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("reprocess failed")
+
+    monkeypatch.setattr(processing, "reprocess", boom)
+    with pytest.raises(RuntimeError):
+        svc.update_project(walk_pid, ProjectPatch(output_size=32, name="renamed"))
+    p = svc.repo.get(walk_pid)
+    assert (p.output_size, p.name) == (64, "Chevalier")
 
 
 async def test_unknown_project(svc):
@@ -401,7 +463,7 @@ async def test_auto_palette_is_shared_by_every_animation(svc, run, walk_pid, sto
     few = PixelSettings.model_validate({"palette": {"mode": "auto", "colors": 4}})
     svc.update_project(walk_pid, ProjectPatch(pixel_settings=few))
     client.responder = recolored
-    svc.configure_animations(walk_pid, [AnimationConfigIn(type="idle", frame_count=4, fps=6)])
+    svc.configure_animations(walk_pid, WALK_AND_IDLE)
     for j in svc.generate_animation(walk_pid, "idle"):
         await run(j)
     p = svc.repo.get(walk_pid)

@@ -5,6 +5,7 @@ from pixelforge.domain.models import (
     DIRECTION_ORDER,
     AnimationConfig,
     AnimationType,
+    OutlineSettings,
     PaletteSettings,
     Project,
 )
@@ -93,3 +94,10 @@ def test_roundtrip_json():
     p = make_project()
     p.animations.append(AnimationConfig.from_type(AnimationType.walk))
     assert Project.model_validate_json(p.model_dump_json()) == p
+
+
+def test_outline_color_must_be_hex():
+    for bad in ("red", "#fff", "#12345g", "1a1a1a", "#1a1a1a "):
+        with pytest.raises(ValidationError):
+            OutlineSettings(color=bad)
+    assert OutlineSettings(color="#A0b1C2").color == "#A0b1C2"
