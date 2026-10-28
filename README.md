@@ -9,14 +9,14 @@ Application locale qui transforme un personnage (image ou description) en **anim
 
 ## Prérequis
 
-- Windows 10/11, GPU NVIDIA (testé visé : RTX 4060 8 Go), 32 Go de RAM conseillés
-- Python 3.11+ (le lanceur `py -3.11` est utilisé s'il existe) et Node.js 18+
+- Windows 10/11, GPU NVIDIA (visé : RTX 4060 8 Go), 32 Go de RAM conseillés
+- Python 3.11+ (le lanceur `py -3.11` est utilisé s'il existe) et Node.js 20+
 - ComfyUI avec ses nœuds et modèles : suivez **`docs/setup-comfyui.md`** (non requis pour le mode démo)
 
 ## Démarrage rapide
 
 1. Installez et lancez ComfyUI (`docs/setup-comfyui.md`).
-2. (Optionnel) copiez `.env.example` en `.env` et ajustez-le.
+2. (Optionnel) copiez `.env.example` en `.env` à la racine du projet (à côté de `start.bat`) et ajustez-le.
 3. Double-cliquez sur **`start.bat`**. Au premier lancement il crée `backend\.venv`, installe les dépendances
    Python et `npm`, puis ouvre deux fenêtres (backend sur le port 8000, frontend sur le port 5173) et le
    navigateur sur <http://localhost:5173>.
@@ -82,3 +82,6 @@ ruff check src tests
 - **Cohérence des sprites** non garantie d'une frame à l'autre : utilisez la régénération frame par frame
   dans l'écran de revue.
 - Mémoire GPU limitée (8 Go) : voir les conseils `--lowvram` dans `docs/setup-comfyui.md`.
+- **Fichiers accumulés dans ComfyUI** : chaque génération laisse des images dans les dossiers `input/`
+  (`pf_*.png`) et `output/pixelforge/` de ComfyUI ; PixelForge ne les supprime pas. Videz-les de temps en
+  temps.
