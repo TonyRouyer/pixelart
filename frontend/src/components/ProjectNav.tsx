@@ -10,6 +10,9 @@ export function ProjectNav({ project }: { project: Project | null }) {
         <>
           <Link to={`/p/${project.id}/reference`}>Référence</Link>
           <Link to={`/p/${project.id}/views`}>Vues</Link>
+          <Link to={`/p/${project.id}/animations`}>Animations</Link>
+          <Link to={`/p/${project.id}/review`}>Revue</Link>
+          <Link to={`/p/${project.id}/export`}>Export</Link>
         </>
       )}
     </nav>
