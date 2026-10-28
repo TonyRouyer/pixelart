@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, fileUrl } from "../api/client";
 import type { AnimationConfig, Direction, Preview } from "../api/types";
@@ -53,7 +53,11 @@ function DirectionCell({ pid, anim, direction, version, busy, run, reload }: Cel
     };
   }, [pid, anim.id, direction, version, state.status]);
 
-  const urls = preview ? preview.frames.map((k) => `${fileUrl(k)}?v=${version}`) : [];
+  // Stable identity, so the players only restart when the frames really change.
+  const urls = useMemo(
+    () => (preview ? preview.frames.map((k) => `${fileUrl(k)}?v=${version}`) : []),
+    [preview, version],
+  );
   const locked = busy || state.status === "generating";
   const names = state.frames;
 

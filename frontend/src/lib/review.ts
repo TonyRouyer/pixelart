@@ -30,3 +30,10 @@ export function parsePaletteText(text: string): string[] {
   }
   return colors;
 }
+
+/** Integer in [min, max] from the text of an input; `fallback` (also clamped) when it is not a number. */
+export function clampInt(raw: string, min: number, max: number, fallback: number): number {
+  const n = /^\s*-?\d+\s*$/.test(raw) ? Number.parseInt(raw, 10) : Number.NaN;
+  const v = Number.isNaN(n) ? fallback : n;
+  return Math.min(max, Math.max(min, v));
+}

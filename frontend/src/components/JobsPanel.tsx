@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useMatch } from "react-router-dom";
 import { api } from "../api/client";
 import type { Job, JobStatus, ServerEvent } from "../api/types";
 import { useEvents } from "../hooks/useEvents";
@@ -21,18 +22,27 @@ export function JobsPanel() {
   const [jobs, setJobs] = useState<Record<string, Job>>({});
   const [open, setOpen] = useState(true);
 
+  // On a project route only that project's jobs are shown; elsewhere all of them, labelled.
+  const projectId = useMatch("/p/:id/*")?.params.id;
+
   const load = useCallback(() => {
+    setJobs({});
     api
-      .listJobs()
+      .listJobs(projectId)
       .then((list) => setJobs(Object.fromEntries(list.map((j) => [j.id, j]))))
       .catch(() => {});
-  }, []);
+  }, [projectId]);
 
   useEffect(load, [load]);
 
-  const onEvent = useCallback((e: ServerEvent) => {
-    if (e.type === "job") setJobs((prev) => ({ ...prev, [e.job.id]: e.job }));
-  }, []);
+  const onEvent = useCallback(
+    (e: ServerEvent) => {
+      if (e.type === "job" && (!projectId || e.job.project_id === projectId)) {
+        setJobs((prev) => ({ ...prev, [e.job.id]: e.job }));
+      }
+    },
+    [projectId],
+  );
   useEvents(onEvent);
 
   const list = Object.values(jobs)
@@ -53,6 +63,7 @@ export function JobsPanel() {
               <div className="job-head">
                 <span className="job-kind">{job.kind}</span>
                 <span className="job-target muted">{job.target}</span>
+                {!projectId && <span className="job-project muted">{job.project_id}</span>}
                 <span className="job-status">{STATUS_LABEL[job.status]}</span>
                 {isActive(job) && (
                   <button onClick={() => api.cancelJob(job.id).catch(() => {})}>Annuler</button>

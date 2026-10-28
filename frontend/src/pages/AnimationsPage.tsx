@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { AnimationConfigIn, AnimationType } from "../api/types";
 import { ErrorNote, toErrorInfo } from "../components/ErrorNote";
+import { NumberField } from "../components/NumberField";
 import { ProjectNav } from "../components/ProjectNav";
 import { useProject } from "../hooks/useProject";
 
@@ -33,8 +34,6 @@ interface Row {
   frames: number;
   fps: number;
 }
-
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.round(v) || lo));
 
 function defaultRows(): Record<AnimationType, Row> {
   return Object.fromEntries(
@@ -121,25 +120,23 @@ export function AnimationsPage() {
                 </label>
               </td>
               <td>
-                <input
-                  type="number"
-                  aria-label={`Frames ${ANIMATION_LABEL[t]}`}
+                <NumberField
+                  label={`Frames ${ANIMATION_LABEL[t]}`}
                   min={2}
                   max={16}
                   value={rows[t].frames}
                   disabled={!rows[t].enabled}
-                  onChange={(e) => patch(t, { frames: clamp(e.target.valueAsNumber, 2, 16) })}
+                  onCommit={(v) => patch(t, { frames: v })}
                 />
               </td>
               <td>
-                <input
-                  type="number"
-                  aria-label={`FPS ${ANIMATION_LABEL[t]}`}
+                <NumberField
+                  label={`FPS ${ANIMATION_LABEL[t]}`}
                   min={1}
                   max={60}
                   value={rows[t].fps}
                   disabled={!rows[t].enabled}
-                  onChange={(e) => patch(t, { fps: clamp(e.target.valueAsNumber, 1, 60) })}
+                  onCommit={(v) => patch(t, { fps: v })}
                 />
               </td>
               <td>

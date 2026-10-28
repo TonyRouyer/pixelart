@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
-import type { PixelSettings, Project } from "../api/types";
+import type { PixelSettings, Project, ProjectPatch } from "../api/types";
 import { parsePaletteText } from "../lib/review";
+import { NumberField } from "./NumberField";
 import { ErrorNote, toErrorInfo } from "./ErrorNote";
 
 type Err = { message: string; hint: string | null } | null;
@@ -15,26 +16,37 @@ export function PixelSettingsPanel({ project }: { project: Project }) {
   const [presets, setPresets] = useState<string[]>([]);
   const [error, setError] = useState<Err>(null);
   const [fileNote, setFileNote] = useState<string | null>(null);
-  const timers = useRef<{ settings?: ReturnType<typeof setTimeout>; size?: ReturnType<typeof setTimeout> }>({});
+  type Key = "settings" | "size";
+  const timers = useRef<Partial<Record<Key, ReturnType<typeof setTimeout>>>>({});
+  const pending = useRef<Partial<Record<Key, ProjectPatch>>>({});
   const pid = project.id;
+
+  const flush = (key: Key) => {
+    clearTimeout(timers.current[key]);
+    const patch = pending.current[key];
+    delete pending.current[key];
+    if (!patch) return;
+    api.updateProject(pid, patch).then(
+      () => setError(null),
+      (e) => setError(toErrorInfo(e)),
+    );
+  };
+  const flushRef = useRef(flush);
+  flushRef.current = flush;
 
   useEffect(() => {
     api.palettePresets().then((p) => setPresets(Object.keys(p)), () => setPresets([]));
-    const t = timers.current;
+    // A change still waiting for its debounce is sent, not dropped, when the panel goes away.
     return () => {
-      clearTimeout(t.settings);
-      clearTimeout(t.size);
+      flushRef.current("settings");
+      flushRef.current("size");
     };
   }, []);
 
-  const send = (key: "settings" | "size", patch: Parameters<typeof api.updateProject>[1]) => {
+  const send = (key: Key, patch: ProjectPatch) => {
     clearTimeout(timers.current[key]);
-    timers.current[key] = setTimeout(() => {
-      api.updateProject(pid, patch).then(
-        () => setError(null),
-        (e) => setError(toErrorInfo(e)),
-      );
-    }, DEBOUNCE_MS);
+    pending.current[key] = patch;
+    timers.current[key] = setTimeout(() => flush(key), DEBOUNCE_MS);
   };
 
   const change = (next: PixelSettings) => {
@@ -43,8 +55,10 @@ export function PixelSettingsPanel({ project }: { project: Project }) {
     const incomplete =
       (mode === "preset" && !preset) || (mode === "custom" && (custom_colors?.length ?? 0) < 2);
     // Wait for a preset / an imported palette before sending an invalid combination.
-    if (incomplete) clearTimeout(timers.current.settings);
-    else send("settings", { pixel_settings: next });
+    if (incomplete) {
+      clearTimeout(timers.current.settings);
+      delete pending.current.settings;
+    } else send("settings", { pixel_settings: next });
   };
   const palette = settings.palette;
   const setPalette = (p: Partial<PixelSettings["palette"]>) =>
@@ -84,14 +98,12 @@ export function PixelSettingsPanel({ project }: { project: Project }) {
         {palette.mode === "auto" && (
           <label>
             Nombre de couleurs (2–64)
-            <input
-              type="number"
+            <NumberField
+              label="Nombre de couleurs"
               min={2}
               max={64}
               value={palette.colors}
-              onChange={(e) =>
-                setPalette({ colors: Math.min(64, Math.max(2, e.target.valueAsNumber || 2)) })
-              }
+              onCommit={(v) => setPalette({ colors: v })}
             />
           </label>
         )}
@@ -161,13 +173,12 @@ export function PixelSettingsPanel({ project }: { project: Project }) {
         </label>
         <label>
           Taille de sortie (16–256 px)
-          <input
-            type="number"
+          <NumberField
+            label="Taille de sortie"
             min={16}
             max={256}
             value={size}
-            onChange={(e) => {
-              const v = Math.min(256, Math.max(16, e.target.valueAsNumber || 16));
+            onCommit={(v) => {
               setSize(v);
               send("size", { output_size: v });
             }}
