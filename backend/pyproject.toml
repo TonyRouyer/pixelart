@@ -36,6 +36,10 @@ markers = [
     "godot: requires a Godot executable",
 ]
 addopts = "-m 'not gpu and not godot'"
+filterwarnings = [
+    # starlette's TestClient prefers httpx2; the httpx pin is intentional for now
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
 
 [tool.ruff]
 line-length = 100
