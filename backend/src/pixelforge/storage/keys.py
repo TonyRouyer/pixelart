@@ -25,8 +25,12 @@ def reference_image(pid: str) -> str:
     return f"projects/{pid}/reference/reference.png"
 
 
+def candidates_dir(pid: str) -> str:
+    return f"projects/{pid}/reference/candidates"
+
+
 def candidate(pid: str, i: int) -> str:
-    return f"projects/{pid}/reference/candidates/{i}.png"
+    return f"{candidates_dir(pid)}/{i}.png"
 
 
 def view_image(pid: str, d: Direction | str) -> str:
@@ -41,8 +45,12 @@ def raw_frame(pid: str, anim: str, d: Direction | str, name: str) -> str:
     return f"{raw_dir(pid, anim, d)}/{name}"
 
 
+def processed_dir(pid: str, anim: str, d: Direction | str) -> str:
+    return f"projects/{pid}/animations/{anim}/{_d(d)}/processed"
+
+
 def processed_frame(pid: str, anim: str, d: Direction | str, name: str) -> str:
-    return f"projects/{pid}/animations/{anim}/{_d(d)}/processed/{name}"
+    return f"{processed_dir(pid, anim, d)}/{name}"
 
 
 def export_zip(pid: str, stamp: str) -> str:

@@ -38,3 +38,32 @@ def test_list_ignores_other_files_and_sorts(tmp_path):
     a, b = repo.create("a"), repo.create("b")
     s.write_bytes(f"projects/{a.id}/reference/input.png", b"x")
     assert [x.id for x in repo.list()] == sorted([a.id, b.id])
+
+
+BAD_IDS = ["", "a/b", "a\\b", "..", "../x", "a..b"]
+
+
+@pytest.mark.parametrize("pid", BAD_IDS)
+def test_unsafe_ids_are_not_found(tmp_path, pid):
+    s = LocalStorage(tmp_path)
+    repo = ProjectRepository(s)
+    keep = repo.create("keep")
+    with pytest.raises(ProjectNotFound):
+        repo.get(pid)
+    with pytest.raises(ProjectNotFound):
+        repo.delete(pid)
+    with pytest.raises(ProjectNotFound):
+        repo.save(keep.model_copy(update={"id": pid}))
+    assert [p.id for p in repo.list()] == [keep.id]
+
+
+def test_create_retries_on_id_collision(tmp_path, monkeypatch):
+    from pixelforge.storage import projects
+
+    suffixes = iter(["aaaa", "aaaa", "aaaa", "bbbb"])
+    monkeypatch.setattr(projects.secrets, "token_hex", lambda n: next(suffixes))
+    repo = ProjectRepository(LocalStorage(tmp_path))
+    first = repo.create("x")
+    second = repo.create("x")
+    assert (first.id, second.id) == ("x-aaaa", "x-bbbb")
+    assert repo.get("x-aaaa").name == "x"
