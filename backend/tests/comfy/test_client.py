@@ -2,6 +2,8 @@ import asyncio
 import io
 import json
 import socket
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 import pytest
@@ -36,8 +38,23 @@ def png_bytes(color) -> bytes:
 class FakeComfyServer:
     """HTTP side via httpx.MockTransport, WebSocket side via a real local websockets server."""
 
-    def __init__(self, ws_messages: list):
+    def __init__(
+        self,
+        ws_messages: list,
+        close: str | None = None,
+        history_pending: int = 0,
+        history_entry: dict | None = None,
+    ):
+        """``close``: "clean" or "abort" drops the socket after the messages.
+
+        ``history_pending``: number of /history calls answered ``{}`` (prompt not finished)
+        before ``history_entry`` (default: the outputs below) is returned.
+        """
         self.ws_messages = ws_messages
+        self.close = close
+        self.history_pending = history_pending
+        self.history_entry = history_entry
+        self.history_calls = 0
         self.requests: list[httpx.Request] = []
         self.prompt_posted = asyncio.Event()
         self.ws_client_ids: list[str] = []
@@ -50,6 +67,11 @@ class FakeComfyServer:
             self.prompt_posted.set()
             return httpx.Response(200, json={"prompt_id": PROMPT_ID, "number": 0})
         if path == f"/history/{PROMPT_ID}":
+            self.history_calls += 1
+            if self.history_calls <= self.history_pending:
+                return httpx.Response(200, json={})
+            if self.history_entry is not None:
+                return httpx.Response(200, json={PROMPT_ID: self.history_entry})
             outputs = {
                 "10": {"images": [{"filename": "blue.png", "subfolder": "", "type": "output"}]},
                 "9": {"images": [{"filename": "red.png", "subfolder": "pf", "type": "output"}]},
@@ -65,16 +87,32 @@ class FakeComfyServer:
         await self.prompt_posted.wait()
         for msg in self.ws_messages:
             await ws.send(msg if isinstance(msg, bytes) else json.dumps(msg))
-        await ws.wait_closed()
+        if self.close == "clean":
+            await ws.close()
+        elif self.close == "abort":
+            ws.transport.abort()
+        else:
+            await ws.wait_closed()
 
 
-async def run_against(server: FakeComfyServer, progress: list[float]):
+async def run_against(server: FakeComfyServer, progress: list[float], **client_kwargs):
     port = free_port()
     async with serve(server.ws_handler, "127.0.0.1", port):
         client = HttpComfyClient(
-            f"http://127.0.0.1:{port}", client_id="cid", transport=server.transport
+            f"http://127.0.0.1:{port}", client_id="cid", transport=server.transport, **client_kwargs
         )
         return await client.run(WORKFLOW, progress.append)
+
+
+@pytest.fixture
+def broken_system_proxy(monkeypatch):
+    """Point every proxy variable at a closed port, without any localhost bypass."""
+    dead = f"http://127.0.0.1:{free_port()}"
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "WS_PROXY", "WSS_PROXY"):
+        monkeypatch.setenv(name, dead)
+        monkeypatch.setenv(name.lower(), dead)
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
 
 
 def status(t: str, **data) -> dict:
@@ -249,3 +287,86 @@ async def test_fake_client_propagates_responder_error():
     with pytest.raises(ComfyError) as e:
         await FakeComfyClient(boom).run({}, lambda p: None)
     assert e.value.kind == "oom"
+
+
+class _ObjectInfoHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps({"KSampler": {}}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+async def test_http_requests_ignore_system_proxy(broken_system_proxy):
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _ObjectInfoHandler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        client = HttpComfyClient(f"http://127.0.0.1:{httpd.server_address[1]}")
+        assert await client.object_info() == {"KSampler": {}}
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join()
+
+
+async def test_websocket_ignores_system_proxy(broken_system_proxy):
+    server = FakeComfyServer([status("executing", node=None, prompt_id=PROMPT_ID)])
+    images = await run_against(server, [])
+    assert [im.getpixel((0, 0)) for im in images] == [COLORS["red.png"], COLORS["blue.png"]]
+
+
+@pytest.mark.parametrize("close", ["clean", "abort"])
+async def test_websocket_drop_falls_back_to_history(close):
+    server = FakeComfyServer(
+        [status("progress", value=1, max=4, prompt_id=PROMPT_ID)], close=close, history_pending=2
+    )
+    progress: list[float] = []
+    images = await run_against(server, progress, history_poll_interval=0.01)
+    assert progress == [0.25]
+    assert [im.getpixel((0, 0)) for im in images] == [COLORS["red.png"], COLORS["blue.png"]]
+    assert server.history_calls == 3  # 2 polls while running, then the finished entry
+
+
+async def test_websocket_drop_history_error_mapped():
+    error = {
+        "exception_type": "torch.OutOfMemoryError",
+        "exception_message": "CUDA out of memory",
+        "node_id": "16",
+    }
+    entry = {
+        "outputs": {},
+        "status": {
+            "status_str": "error",
+            "completed": False,
+            "messages": [["execution_start", {}], ["execution_error", error]],
+        },
+    }
+    server = FakeComfyServer([], close="clean", history_entry=entry)
+    with pytest.raises(ComfyError) as e:
+        await run_against(server, [], history_poll_interval=0.01)
+    assert e.value.kind == "oom" and "node 16" in e.value.message
+
+
+async def test_websocket_drop_history_interrupted_mapped():
+    entry = {
+        "outputs": {},
+        "status": {"status_str": "error", "messages": [["execution_interrupted", {}]]},
+    }
+    server = FakeComfyServer([], close="clean", history_entry=entry)
+    with pytest.raises(ComfyError) as e:
+        await run_against(server, [], history_poll_interval=0.01)
+    assert e.value.kind == "interrupted"
+
+
+async def test_websocket_drop_without_history_is_unreachable():
+    server = FakeComfyServer([], close="abort", history_pending=10**6)
+    with pytest.raises(ComfyError) as e:
+        await run_against(server, [], history_poll_interval=0.01, history_timeout=0.1)
+    assert e.value.kind == "unreachable"
+    assert 5 <= server.history_calls <= 20

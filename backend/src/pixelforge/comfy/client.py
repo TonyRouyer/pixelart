@@ -1,5 +1,6 @@
 """ComfyUI client protocol and HTTP + WebSocket implementation."""
 
+import asyncio
 import io
 import json
 import uuid
@@ -17,10 +18,13 @@ _OOM_MARKERS = ("outofmemory", "out of memory")
 
 
 class ComfyError(Exception):
-    def __init__(self, kind: ComfyErrorKind, message: str = "") -> None:
+    """``status``: the HTTP status of a failed ComfyUI request, None otherwise."""
+
+    def __init__(self, kind: ComfyErrorKind, message: str = "", status: int | None = None) -> None:
         super().__init__(f"{kind}: {message}" if message else kind)
         self.kind: ComfyErrorKind = kind
         self.message = message
+        self.status = status
 
 
 class ComfyClient(Protocol):
@@ -51,6 +55,20 @@ def _execution_error(data: dict[str, Any]) -> ComfyError:
     return ComfyError(kind, f"{exc_type}: {exc_message}{where}".strip(": "))
 
 
+def _history_failure(entry: dict[str, Any]) -> ComfyError | None:
+    """The error of a finished /history entry, None when it succeeded."""
+    status = entry.get("status") or {}
+    if status.get("status_str") != "error":
+        return None
+    for message in status.get("messages") or []:
+        name, data = message[0], message[1] if len(message) > 1 else {}
+        if name == "execution_error":
+            return _execution_error(data or {})
+        if name == "execution_interrupted":
+            return ComfyError("interrupted", "generation interrupted")
+    return ComfyError("execution", "prompt failed")
+
+
 def _prompt_rejection(response: httpx.Response) -> ComfyError:
     try:
         body = response.json()
@@ -70,11 +88,19 @@ class HttpComfyClient:
         client_id: str | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         timeout: float = 30.0,
+        history_poll_interval: float = 1.0,
+        history_timeout: float = 120.0,
     ) -> None:
+        """``history_*``: how /history is polled when the WebSocket drops mid-prompt.
+
+        ComfyUI is local: system proxies (Windows registry, ``*_PROXY``) are never used.
+        """
         self.base_url = base_url.rstrip("/")
         self.client_id = client_id or uuid.uuid4().hex
         self._transport = transport
         self._timeout = timeout
+        self._poll_interval = history_poll_interval
+        self._history_timeout = history_timeout
 
     @property
     def ws_url(self) -> str:
@@ -85,7 +111,10 @@ class HttpComfyClient:
     async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         try:
             async with httpx.AsyncClient(
-                base_url=self.base_url, transport=self._transport, timeout=self._timeout
+                base_url=self.base_url,
+                transport=self._transport,
+                timeout=self._timeout,
+                trust_env=False,
             ) as http:
                 return await http.request(method, path, **kwargs)
         except httpx.TransportError as exc:
@@ -94,7 +123,11 @@ class HttpComfyClient:
     async def _json(self, method: str, path: str, **kwargs: Any) -> Any:
         response = await self._request(method, path, **kwargs)
         if response.is_error:
-            raise ComfyError("execution", f"{method} {path} -> HTTP {response.status_code}")
+            raise ComfyError(
+                "execution",
+                f"{method} {path} -> HTTP {response.status_code}",
+                status=response.status_code,
+            )
         return response.json()
 
     async def upload_image(self, img: Image.Image, name: str) -> str:
@@ -119,19 +152,43 @@ class HttpComfyClient:
         return await self._json("GET", f"/models/{folder}")
 
     async def run(self, workflow: dict, on_progress: Callable[[float], None]) -> list[Image.Image]:
+        prompt_id: str | None = None
+        finished = False
         try:
-            async with connect(self.ws_url, max_size=None) as ws:
+            async with connect(self.ws_url, max_size=None, proxy=None) as ws:
                 prompt_id = await self._queue(workflow)
                 async for raw in ws:
                     if isinstance(raw, bytes):
                         continue  # binary frames are live previews
                     if self._handle(json.loads(raw), prompt_id, on_progress):
+                        finished = True
                         break
-                else:
-                    raise ComfyError("unreachable", "websocket closed before the prompt finished")
         except (OSError, WebSocketException) as exc:
-            raise ComfyError("unreachable", f"{self.ws_url}: {exc}") from exc
-        return await self._collect(workflow, prompt_id)
+            if prompt_id is None:
+                raise ComfyError("unreachable", f"{self.ws_url}: {exc}") from exc
+        assert prompt_id is not None  # the WS block queues before it can end without error
+        # A dropped WebSocket does not mean a lost prompt: wait for it on /history.
+        entry = await self._history(prompt_id) if finished else await self._await_history(prompt_id)
+        return await self._collect(workflow, (entry or {}).get("outputs", {}))
+
+    async def _history(self, prompt_id: str) -> dict | None:
+        """The /history entry of a finished prompt, None while it is queued or running."""
+        return (await self._json("GET", f"/history/{prompt_id}")).get(prompt_id)
+
+    async def _await_history(self, prompt_id: str) -> dict:
+        """Poll /history until the prompt finishes; "unreachable" once the timeout runs out."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._history_timeout
+        while True:
+            entry = await self._history(prompt_id)
+            if entry is not None:
+                failure = _history_failure(entry)
+                if failure is not None:
+                    raise failure
+                return entry
+            if loop.time() >= deadline:
+                raise ComfyError("unreachable", "websocket closed before the prompt finished")
+            await asyncio.sleep(self._poll_interval)
 
     async def _queue(self, workflow: dict) -> str:
         response = await self._request(
@@ -157,9 +214,7 @@ class HttpComfyClient:
             raise ComfyError("interrupted", "generation interrupted")
         return False
 
-    async def _collect(self, workflow: dict, prompt_id: str) -> list[Image.Image]:
-        history = await self._json("GET", f"/history/{prompt_id}")
-        outputs = history.get(prompt_id, {}).get("outputs", {})
+    async def _collect(self, workflow: dict, outputs: dict) -> list[Image.Image]:
         save_nodes = sorted(
             (nid for nid, n in workflow.items() if n.get("class_type") == "SaveImage"),
             key=_node_order,
