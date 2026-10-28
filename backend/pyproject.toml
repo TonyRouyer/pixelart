@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pixelforge"
+version = "0.1.0"
+description = "PixelForge: pixel-art sprite animations via ComfyUI"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic>=2",
+    "pydantic-settings",
+    "pillow",
+    "numpy",
+    "httpx",
+    "websockets",
+    "python-multipart",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "ruff"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pixelforge"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "gpu: requires a GPU and a running ComfyUI",
+    "godot: requires a Godot executable",
+]
+addopts = "-m 'not gpu and not godot'"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]

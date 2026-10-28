@@ -1,0 +1,10 @@
+data/
+.env
+__pycache__/
+node_modules/
+dist/
+.venv/
+.superpowers/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
