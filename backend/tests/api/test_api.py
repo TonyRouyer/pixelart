@@ -270,3 +270,17 @@ def test_delete_project_with_active_job_is_409(client):
     client.portal.call(lambda: gate.set())
     assert wait_job(client, job.id)["status"] == "succeeded"
     assert client.delete(f"/api/projects/{pid}").status_code == 204
+
+
+def test_fake_comfy_setting_selects_sprite_fake(tmp_path, caplog):
+    from fastapi.testclient import TestClient
+
+    from pixelforge.api.app import create_app
+    from pixelforge.comfy.sprite_fake import SpriteFakeComfyClient
+    from pixelforge.config import Settings
+
+    settings = Settings(_env_file=None, data_dir=tmp_path, fake_comfy=True)
+    with caplog.at_level("WARNING"), TestClient(create_app(settings)) as c:
+        assert isinstance(c.app.state.client, SpriteFakeComfyClient)
+        assert c.get("/api/health").json()["comfy"]["ok"] is True
+    assert "fake" in caplog.text.lower()

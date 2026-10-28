@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -22,6 +23,7 @@ from pixelforge.api.routes import (
 )
 from pixelforge.comfy.client import ComfyClient, HttpComfyClient
 from pixelforge.comfy.health import check_comfy
+from pixelforge.comfy.sprite_fake import SpriteFakeComfyClient
 from pixelforge.config import Settings, get_settings
 from pixelforge.generation.pose_generator import PoseGenerator
 from pixelforge.generation.reference import ComfyReferenceGenerator
@@ -30,6 +32,8 @@ from pixelforge.jobs.queue import JobQueue
 from pixelforge.services.projects import ProjectService
 from pixelforge.storage.local import LocalStorage
 from pixelforge.storage.projects import ProjectRepository
+
+log = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings | None = None, comfy: ComfyClient | None = None) -> FastAPI:
@@ -40,7 +44,13 @@ def create_app(settings: Settings | None = None, comfy: ComfyClient | None = Non
         storage = LocalStorage(settings.data_dir)
         bus = EventBus()
         queue = JobQueue(storage, bus)
-        client = comfy if comfy is not None else HttpComfyClient(settings.comfy_url)
+        if comfy is not None:
+            client = comfy
+        elif settings.fake_comfy:
+            log.warning("PIXELFORGE_FAKE_COMFY is on: using a fake ComfyUI (demo mode, no GPU)")
+            client = SpriteFakeComfyClient()
+        else:
+            client = HttpComfyClient(settings.comfy_url)
 
         async def health():
             return await check_comfy(client, settings)

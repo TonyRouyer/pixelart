@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     controlnet_openpose: str = "controlnet-openpose-sdxl-1.0.safetensors"
     ipadapter_preset: str = "PLUS (high strength)"
     grid_canvas: int = 1024
+    fake_comfy: bool = False  # demo mode: no GPU, ComfyUI replaced by SpriteFakeComfyClient
     cors_origins: list[str] = ["http://localhost:5173"]
 
 
