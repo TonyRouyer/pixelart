@@ -36,8 +36,10 @@ def test_defaults_from_type():
 
 
 def test_all_default_animations():
-    got = {t: (c.frame_count, c.fps, c.loop) for t, c in
-           ((t, AnimationConfig.from_type(t)) for t in AnimationType)}
+    got = {
+        t: (c.frame_count, c.fps, c.loop)
+        for t, c in ((t, AnimationConfig.from_type(t)) for t in AnimationType)
+    }
     assert got[AnimationType.idle] == (4, 6, True)
     assert got[AnimationType.walk] == (6, 10, True)
     assert got[AnimationType.attack_sword] == (6, 12, False)
